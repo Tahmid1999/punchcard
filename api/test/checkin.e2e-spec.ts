@@ -5,11 +5,12 @@ import request from 'supertest';
 import { hashPassword } from '../src/auth/password';
 import { canonical, sha256Hex } from '../src/checkin/proof';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { createTestApp, face, resetDb } from './helpers/app';
+import { createTestApp, face, faceAt, REFERENCE, resetDb } from './helpers/app';
 
 // Office in Mirpur. 23.78100 is about 50 m north of it, 23.79000 about 1 km.
 const OFFICE = { name: 'Mirpur', lat: 23.7805, lng: 90.2792, radiusM: 80 };
-const PHOTO = Buffer.from('not really a jpeg, the face check is stubbed');
+// The face service is stubbed, so the bytes only matter for the signed hash.
+const PHOTO = Buffer.from('not really a jpeg');
 
 interface Phone {
   deviceId: string;
@@ -83,7 +84,8 @@ describe('pair a phone and check in', () => {
 
   beforeEach(async () => {
     await resetDb(prisma);
-    face.next = { ok: true, score: 0.71 };
+    face.next = { faces: 1, embedding: REFERENCE };
+    face.down = false;
     await prisma.admin.create({
       data: { email: 'admin@example.com', passwordHash: await hashPassword('pw') },
     });
@@ -99,6 +101,11 @@ describe('pair a phone and check in', () => {
       .send({ code: 'E-001', name: 'Rahim Uddin' })
       .expect(201);
     employeeId = emp.id;
+    await http()
+      .post(`/employees/${employeeId}/faces`)
+      .set('Authorization', auth)
+      .attach('photo', PHOTO, 'reference.jpg')
+      .expect(201);
   });
 
   afterAll(async () => {
@@ -179,15 +186,90 @@ describe('pair a phone and check in', () => {
 
   it('rejects when the face does not match, keeping the score', async () => {
     const phone = await pairPhone();
-    face.next = { ok: false, score: 0.12, reason: 'face does not match' };
+    face.next = { faces: 1, embedding: faceAt(0.12) };
+    const res = await checkIn(phone);
+    expect(res.body.reason).toBe('face does not match');
+    const row = await prisma.attendance.findUniqueOrThrow({ where: { id: res.body.id } });
+    expect(row).toMatchObject({ result: 'REJECTED', locationOk: true, faceOk: false });
+    expect(row.faceScore).toBeCloseTo(0.12, 5);
+  });
+
+  it('accepts just over the threshold and not just under', async () => {
+    const phone = await pairPhone();
+    face.next = { faces: 1, embedding: faceAt(0.37) };
+    expect((await checkIn(phone)).body.result).toBe('ACCEPTED');
+    face.next = { faces: 1, embedding: faceAt(0.35) };
+    expect((await checkIn(phone)).body.result).toBe('REJECTED');
+  });
+
+  it('scores against the closest of several references', async () => {
+    const phone = await pairPhone();
+    face.next = { faces: 1, embedding: faceAt(0.9) };
+    await http()
+      .post(`/employees/${employeeId}/faces`)
+      .set('Authorization', auth)
+      .attach('photo', PHOTO, 'second.jpg')
+      .expect(201);
+    face.next = { faces: 1, embedding: faceAt(0.5) };
     const res = await checkIn(phone);
     const row = await prisma.attendance.findUniqueOrThrow({ where: { id: res.body.id } });
-    expect(row).toMatchObject({
-      result: 'REJECTED',
-      locationOk: true,
-      faceOk: false,
-      faceScore: 0.12,
-    });
+    // cos(0.5 vs 0.9) is 0.5*0.9 + sqrt(0.75)*sqrt(0.19), about 0.83, beating 0.5 against REFERENCE.
+    expect(row.faceScore).toBeCloseTo(0.5 * 0.9 + Math.sqrt(0.75 * 0.19), 5);
+  });
+
+  it('rejects when the face service is down, after the location passed', async () => {
+    const phone = await pairPhone();
+    face.down = true;
+    const res = await checkIn(phone);
+    expect(res.body).toMatchObject({ result: 'REJECTED', reason: 'face service unavailable' });
+    const row = await prisma.attendance.findUniqueOrThrow({ where: { id: res.body.id } });
+    expect(row).toMatchObject({ locationOk: true, faceOk: false, faceScore: null });
+  });
+
+  it('rejects a photo with two faces or none', async () => {
+    const phone = await pairPhone();
+    face.next = { faces: 2, embedding: null };
+    expect((await checkIn(phone)).body.reason).toBe('2 faces in the photo');
+    face.next = { faces: 0, embedding: null };
+    expect((await checkIn(phone)).body.reason).toBe('no face in the photo');
+  });
+
+  it('rejects an employee with no reference face', async () => {
+    const phone = await pairPhone();
+    await prisma.faceTemplate.deleteMany();
+    expect((await checkIn(phone)).body.reason).toBe('no reference face on file');
+  });
+
+  it('will not enrol a reference with no face or when the service is down', async () => {
+    const enrol = () =>
+      http()
+        .post(`/employees/${employeeId}/faces`)
+        .set('Authorization', auth)
+        .attach('photo', PHOTO, 'reference.jpg');
+    face.next = { faces: 0, embedding: null };
+    expect((await enrol().expect(400)).body.message).toBe('no face in the photo');
+    face.down = true;
+    await enrol().expect(503);
+    expect(await prisma.faceTemplate.count()).toBe(1);
+  });
+
+  it('lists and deletes reference faces, admin only', async () => {
+    const { body: list } = await http()
+      .get(`/employees/${employeeId}/faces`)
+      .set('Authorization', auth)
+      .expect(200);
+    expect(list).toHaveLength(1);
+    expect(list[0]).not.toHaveProperty('embedding');
+
+    await http().delete(`/employees/${employeeId}/faces/${list[0].id}`).expect(401);
+    await http()
+      .delete(`/employees/${employeeId}/faces/${list[0].id}`)
+      .set('Authorization', auth)
+      .expect(204);
+    await http()
+      .delete(`/employees/${employeeId}/faces/${list[0].id}`)
+      .set('Authorization', auth)
+      .expect(404);
   });
 
   it('ends the old phone when a new one is paired', async () => {

@@ -1,18 +1,26 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Module,
   NotFoundException,
   Param,
   ParseUUIDPipe,
   Post,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { IsString, Length, Matches } from 'class-validator';
 import { createHash, randomBytes } from 'node:crypto';
 
 import { AdminGuard } from '../auth/admin.guard';
+import { FaceModule } from '../face/face.module';
+import { FaceService } from '../face/face.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const PAIRING_TTL_MS = 10 * 60 * 1000;
@@ -29,7 +37,10 @@ class CreateEmployeeDto {
 @Controller('employees')
 @UseGuards(AdminGuard)
 class EmployeesController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly faces: FaceService,
+  ) {}
 
   @Post()
   create(@Body() dto: CreateEmployeeDto) {
@@ -66,7 +77,42 @@ class EmployeesController {
     });
     return { code, expiresAt };
   }
+
+  @Get(':id/faces')
+  listFaces(@Param('id', ParseUUIDPipe) id: string) {
+    return this.prisma.faceTemplate.findMany({
+      where: { employeeId: id },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, createdAt: true },
+    });
+  }
+
+  // The admin takes this photo at the office. A reference the employee sent from
+  // home would let anyone enrol whatever face they like.
+  @Post(':id/faces')
+  @UseInterceptors(FileInterceptor('photo', { limits: { fileSize: 4 * 1024 * 1024 } }))
+  async addFace(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() photo?: Express.Multer.File,
+  ) {
+    if (!photo) throw new BadRequestException('photo is required');
+    const employee = await this.prisma.employee.findUnique({ where: { id } });
+    if (!employee?.active) throw new NotFoundException('no active employee with that id');
+    return this.faces.enrol(id, photo.buffer);
+  }
+
+  @Delete(':id/faces/:faceId')
+  @HttpCode(204)
+  async removeFace(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('faceId', ParseUUIDPipe) faceId: string,
+  ) {
+    const { count } = await this.prisma.faceTemplate.deleteMany({
+      where: { id: faceId, employeeId: id },
+    });
+    if (count === 0) throw new NotFoundException('no such reference face');
+  }
 }
 
-@Module({ controllers: [EmployeesController] })
+@Module({ imports: [FaceModule], controllers: [EmployeesController] })
 export class EmployeesModule {}

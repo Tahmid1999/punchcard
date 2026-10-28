@@ -26,8 +26,8 @@ import {
 
 import { AdminGuard } from '../auth/admin.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { FaceModule } from '../face/face.module';
 import { CheckinService } from './checkin.service';
-import { FaceService } from './face.service';
 
 const DECIMAL = /^-?\d{1,3}(\.\d{1,10})?$/;
 
@@ -126,5 +126,5 @@ class CheckinController {
   }
 }
 
-@Module({ controllers: [CheckinController], providers: [CheckinService, FaceService] })
+@Module({ imports: [FaceModule], controllers: [CheckinController], providers: [CheckinService] })
 export class CheckinModule {}

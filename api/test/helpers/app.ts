@@ -2,17 +2,35 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 
 import { AppModule } from '../../src/app.module';
-import { FaceResult, FaceService } from '../../src/checkin/face.service';
+import { Embedding, FaceClient, FaceUnavailable } from '../../src/face/face.client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
-// The real face check fails closed until stage 2, so the suite swaps in one it
-// can steer. Everything else is the real module graph.
-export const face = { next: { ok: true, score: 0.71 } as FaceResult };
+// A unit vector whose cosine with REFERENCE is `c`. The suite enrols REFERENCE
+// and then picks how close each check-in face is.
+export function faceAt(c: number): Buffer {
+  const b = Buffer.alloc(512);
+  b.writeFloatLE(c, 0);
+  b.writeFloatLE(Math.sqrt(1 - c * c), 4);
+  return b;
+}
+export const REFERENCE = faceAt(1);
+
+// Only the HTTP call to the Python service is swapped out. The matching, the
+// threshold and the reasons are the real FaceService.
+export const face: { next: Embedding; down: boolean } = {
+  next: { faces: 1, embedding: REFERENCE },
+  down: false,
+};
 
 export async function createTestApp(): Promise<INestApplication> {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(FaceService)
-    .useValue({ match: async () => face.next })
+    .overrideProvider(FaceClient)
+    .useValue({
+      embed: async (): Promise<Embedding> => {
+        if (face.down) throw new FaceUnavailable('stub is down');
+        return face.next;
+      },
+    })
     .compile();
   const app = moduleRef.createNestApplication();
   app.useGlobalPipes(

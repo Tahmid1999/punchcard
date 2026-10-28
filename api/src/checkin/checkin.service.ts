@@ -3,7 +3,7 @@ import { LivenessAction, Prisma } from '@prisma/client';
 import { randomBytes, randomInt } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { FaceService } from './face.service';
+import { FaceService } from '../face/face.service';
 import { MAX_ACCURACY_M, nearestOffice } from './geo';
 import { canonical, sha256Hex, SignedFields, verifySignature } from './proof';
 
