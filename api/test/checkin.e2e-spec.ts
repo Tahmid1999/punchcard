@@ -301,6 +301,44 @@ describe('pair a phone and check in', () => {
     await http().post('/devices/pair').send({ code: pairing.code, publicKey: rsa }).expect(400);
   });
 
+  it('reports a month in office time, not utc', async () => {
+    const phone = await pairPhone();
+    const ids = [
+      (await checkIn(phone)).body.id,
+      (await checkIn(phone, { kind: 'OUT' })).body.id,
+      (await checkIn(phone, { lat: '23.79000' })).body.id,
+      (await checkIn(phone)).body.id,
+    ];
+    // 19:30 UTC on 1 Oct is 01:30 on 2 Oct in Dhaka.
+    const at = [
+      '2026-10-01T19:30:00Z',
+      '2026-10-02T11:00:00Z',
+      '2026-10-02T03:00:00Z',
+      '2026-09-30T05:00:00Z',
+    ];
+    for (const [i, id] of ids.entries()) {
+      await prisma.attendance.update({ where: { id }, data: { at: new Date(at[i]) } });
+    }
+
+    const { body } = await http()
+      .get('/attendance/report?month=2026-10')
+      .set('Authorization', auth)
+      .expect(200);
+    expect(body).toMatchObject({ month: '2026-10', timezone: 'Asia/Dhaka', daysInMonth: 31 });
+    expect(body.employees).toHaveLength(1);
+    expect(body.employees[0]).toMatchObject({ code: 'E-001', present: 1 });
+    expect(body.employees[0].days).toEqual([
+      {
+        day: '2026-10-02',
+        firstIn: '2026-10-01T19:30:00.000Z',
+        lastOut: '2026-10-02T11:00:00.000Z',
+        rejected: 1,
+      },
+    ]);
+
+    await http().get('/attendance/report?month=2026-13').set('Authorization', auth).expect(400);
+  });
+
   it('keeps the admin routes behind a token', async () => {
     await http().get('/attendance').expect(401);
     await http().get('/employees').set('Authorization', 'Bearer nope').expect(401);

@@ -28,6 +28,7 @@ import { AdminGuard } from '../auth/admin.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { FaceModule } from '../face/face.module';
 import { CheckinService } from './checkin.service';
+import { monthReport } from './report';
 
 const DECIMAL = /^-?\d{1,3}(\.\d{1,10})?$/;
 
@@ -90,6 +91,16 @@ class ListDto {
   limit?: number;
 }
 
+class ReportDto {
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/)
+  month!: string;
+}
+
+// Checked once at startup: a typo here would otherwise only show up as a
+// Postgres error the first time someone opens the report.
+const TIMEZONE = process.env.TIMEZONE ?? 'Asia/Dhaka';
+new Intl.DateTimeFormat('en', { timeZone: TIMEZONE });
+
 @Controller()
 class CheckinController {
   constructor(
@@ -123,6 +134,12 @@ class CheckinController {
       take: q.limit ?? 100,
       include: { employee: { select: { code: true, name: true } } },
     });
+  }
+
+  @Get('attendance/report')
+  @UseGuards(AdminGuard)
+  report(@Query() q: ReportDto) {
+    return monthReport(this.prisma, q.month, TIMEZONE);
   }
 }
 
