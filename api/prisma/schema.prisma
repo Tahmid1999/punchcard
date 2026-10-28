@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7: the connection URL lives in prisma.config.ts, not here.
+datasource db {
+  provider = "postgresql"
+}
+
+model Admin {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model Office {
+  id         String       @id @default(uuid())
+  name       String
+  lat        Float
+  lng        Float
+  radiusM    Int
+  createdAt  DateTime     @default(now())
+  attendance Attendance[]
+}
+
+model Employee {
+  id         String         @id @default(uuid())
+  code       String         @unique
+  name       String
+  active     Boolean        @default(true)
+  createdAt  DateTime       @default(now())
+  devices    Device[]
+  pairings   PairingCode[]
+  faces      FaceTemplate[]
+  attendance Attendance[]
+}
+
+model Device {
+  id         String       @id @default(uuid())
+  employeeId String
+  employee   Employee     @relation(fields: [employeeId], references: [id])
+  // SPKI DER, base64. Android Keystore hands this out from getPublicKey().getEncoded().
+  publicKey  String
+  model      String?
+  pairedAt   DateTime     @default(now())
+  revokedAt  DateTime?
+  challenges Challenge[]
+  attendance Attendance[]
+
+  @@index([employeeId])
+}
+
+model PairingCode {
+  id         String    @id @default(uuid())
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id])
+  // sha256 of the code. The plain code only ever exists in the QR on the admin's screen.
+  codeHash   String    @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model FaceTemplate {
+  id         String   @id @default(uuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  embedding  Bytes
+  createdAt  DateTime @default(now())
+
+  @@index([employeeId])
+}
+
+enum LivenessAction {
+  TURN_LEFT
+  TURN_RIGHT
+  BLINK
+  SMILE
+}
+
+model Challenge {
+  id        String         @id @default(uuid())
+  deviceId  String
+  device    Device         @relation(fields: [deviceId], references: [id])
+  nonce     String
+  action    LivenessAction
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime       @default(now())
+}
+
+enum Kind {
+  IN
+  OUT
+}
+
+enum Result {
+  ACCEPTED
+  REJECTED
+}
+
+model Attendance {
+  id           String   @id @default(uuid())
+  employeeId   String
+  employee     Employee @relation(fields: [employeeId], references: [id])
+  deviceId     String
+  device       Device   @relation(fields: [deviceId], references: [id])
+  officeId     String?
+  office       Office?  @relation(fields: [officeId], references: [id])
+  challengeId  String   @unique
+  kind         Kind
+  at           DateTime @default(now())
+  lat          Float
+  lng          Float
+  accuracyM    Float
+  mock         Boolean
+  distanceM    Float?
+  faceScore    Float?
+  // Each check is stored on its own so a rejected row says which proof failed,
+  // and null means the check never ran because an earlier one already failed.
+  signatureOk  Boolean
+  photoOk      Boolean?
+  locationOk   Boolean?
+  faceOk       Boolean?
+  result       Result
+  reason       String?
+
+  @@index([employeeId, at])
+}
