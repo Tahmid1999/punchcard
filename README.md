@@ -6,6 +6,10 @@ I built this to have one project that goes from a phone's secure hardware to a d
 
 NestJS, Prisma, PostgreSQL, Python with OpenCV, Next.js with Ant Design, Flutter with a small Kotlin channel, Docker Compose.
 
+[![A narrated walk through one check-in](docs/explainer-poster.png)](docs/punchcard-explainer.mp4)
+
+[The explainer](docs/punchcard-explainer.mp4) (2:51, captioned) goes through one check-in from enrolment to the saved row. It is drawn, not a screen recording: the phone screens in it are real screenshots from my test phone, and the rejected and accepted rows are my real attempts. The voice is a stock ElevenLabs voice.
+
 ## Run it
 
 ```bash
