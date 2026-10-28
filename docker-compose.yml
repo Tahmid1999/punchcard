@@ -1,0 +1,90 @@
+# The whole stack: Postgres, the face service, the API and the admin panel.
+#
+#   PHONE_API_URL=http://<this machine's LAN IP>:3200 docker compose up --build
+#
+# PHONE_API_URL goes into the pairing QR, so it must be an address the phone
+# can reach. The API is the one port published on every interface for that
+# reason; the database and the admin panel stay on loopback, and the face
+# service has no host port at all because only the API talks to it.
+#
+# Postgres is on host port 5435 because local development here runs another
+# one on 5434.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: punchcard-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: punchcard
+      POSTGRES_PASSWORD: punchcard
+      POSTGRES_DB: punchcard
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U punchcard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  face:
+    build: ./face
+    container_name: punchcard-face
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3201/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    container_name: punchcard-api
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+      face: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://punchcard:punchcard@db:5432/punchcard?schema=public
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      PORT: 3200
+      TIMEZONE: Asia/Dhaka
+      FACE_URL: http://face:3201
+      FACE_THRESHOLD: 0.363
+    ports:
+      - "3200:3200"
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:3200/docs"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # The seed is an upsert, so running it on every start only resets the
+    # admin password to ADMIN_PASSWORD.
+    command: sh -c "npx prisma migrate deploy && node dist/seed && node dist/main"
+
+  admin:
+    build:
+      context: ./admin
+      args:
+        NEXT_PUBLIC_PHONE_API_URL: ${PHONE_API_URL:-http://192.168.0.10:3200}
+        NEXT_PUBLIC_TIMEZONE: Asia/Dhaka
+    container_name: punchcard-admin
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      API_URL: http://api:3200
+    ports:
+      - "127.0.0.1:3202:3202"
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:3202/login"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgdata:
