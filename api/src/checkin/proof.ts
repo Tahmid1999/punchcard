@@ -35,7 +35,11 @@ export function sha256Hex(data: Buffer): string {
 // SHA256withECDSA returns. Node's verify expects DER for EC keys by default.
 export function verifySignature(publicKey: string, message: string, signature: string): boolean {
   try {
-    const key = createPublicKey({ key: Buffer.from(publicKey, 'base64'), format: 'der', type: 'spki' });
+    const key = createPublicKey({
+      key: Buffer.from(publicKey, 'base64'),
+      format: 'der',
+      type: 'spki',
+    });
     if (key.asymmetricKeyType !== 'ec') return false;
     return verify('sha256', Buffer.from(message), key, Buffer.from(signature, 'base64'));
   } catch {
