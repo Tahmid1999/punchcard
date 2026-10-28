@@ -7,4 +7,4 @@ import { config } from 'dotenv';
 // demo is using. .env.test wins when present; without it the suite falls back
 // to .env and will wipe whatever is there.
 const testEnv = join(process.cwd(), '.env.test');
-config({ path: existsSync(testEnv) ? testEnv : join(process.cwd(), '.env') });
+config({ path: existsSync(testEnv) ? testEnv : join(process.cwd(), '.env'), quiet: true });
