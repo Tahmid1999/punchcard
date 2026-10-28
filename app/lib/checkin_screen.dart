@@ -14,7 +14,7 @@ import 'proof.dart';
 import 'store.dart';
 
 // ML Kit's headEulerAngleY, flipped if needed so that positive means the person
-// turned to their own left. Checked by hand on the front camera of the ANE-LX2.
+// turned to their own left. A turn-right challenge passed on an OPPO CPH2113 front camera.
 const yawSign = 1.0;
 
 enum _Stage { starting, liveness, working, finished, failed }
@@ -43,7 +43,10 @@ class _CheckinScreenState extends State<CheckinScreen> {
   CameraController? _cam;
   Challenge? _challenge;
   Liveness? _live;
-  Future<Position>? _where;
+  StreamSubscription<Position>? _fixes;
+  final _firstFix = Completer<Position>();
+  // The most accurate reading so far. Indoors one reading can be off by 100 m
+  // and the next by 20, so the app keeps listening for the whole face check.
   Position? _fix;
   bool _busy = false;
   int _faces = 0;
@@ -62,6 +65,7 @@ class _CheckinScreenState extends State<CheckinScreen> {
   @override
   void dispose() {
     _tick?.cancel();
+    _fixes?.cancel();
     _cam?.dispose();
     _detector.close();
     super.dispose();
@@ -89,9 +93,7 @@ class _CheckinScreenState extends State<CheckinScreen> {
     if (noLocation != null) return _fail(noLocation);
 
     // The fix takes longest, so it runs while the face check happens.
-    final where = _locate();
-    _where = where;
-    unawaited(where.then((p) => mounted ? setState(() => _fix = p) : null, onError: (_) {}));
+    _watchLocation();
 
     try {
       final cameras = await availableCameras();
@@ -144,12 +146,21 @@ class _CheckinScreenState extends State<CheckinScreen> {
     return null;
   }
 
-  Future<Position> _locate() {
-    return Geolocator.getCurrentPosition(
-      locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.best,
-        timeLimit: const Duration(seconds: 40),
-      ),
+  void _watchLocation() {
+    final settings = AndroidSettings(
+      accuracy: LocationAccuracy.best,
+      intervalDuration: const Duration(seconds: 1),
+    );
+    _fixes = Geolocator.getPositionStream(locationSettings: settings).listen(
+      (p) {
+        if (!_firstFix.isCompleted) _firstFix.complete(p);
+        if (_fix == null || p.accuracy < _fix!.accuracy) {
+          if (mounted) setState(() => _fix = p);
+        }
+      },
+      onError: (Object e) {
+        if (!_firstFix.isCompleted) _firstFix.completeError(e);
+      },
     );
   }
 
@@ -215,7 +226,8 @@ class _CheckinScreenState extends State<CheckinScreen> {
       await File(shot.path).delete();
 
       setState(() => _status = 'Waiting for a location fix');
-      final pos = await _where!;
+      final pos = _fix ?? await _firstFix.future.timeout(const Duration(seconds: 40));
+      await _fixes?.cancel();
 
       final fields = SignedFields(
         challengeId: ch.id,
@@ -256,6 +268,8 @@ class _CheckinScreenState extends State<CheckinScreen> {
       _fail(e.code == 'CANCELLED' ? 'Fingerprint cancelled. Nothing was sent.' : e.message ?? e.code);
     } on ApiException catch (e) {
       _fail(e.status == 410 ? 'The 60 seconds ran out. Try again.' : e.message);
+    } on TimeoutException {
+      _fail('No location fix after 40 seconds. Move nearer a window and try again.');
     } catch (e) {
       _fail('$e');
     }
