@@ -34,7 +34,7 @@ services:
     container_name: punchcard-face
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3201/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3201/health')"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -57,8 +57,10 @@ services:
       FACE_THRESHOLD: 0.363
     ports:
       - "3200:3200"
+    # 127.0.0.1, not localhost: busybox wget tries ::1 first and does not fall
+    # back, and the API listens on IPv4 only.
     healthcheck:
-      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:3200/docs"]
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3200/docs"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -81,7 +83,7 @@ services:
     ports:
       - "127.0.0.1:3202:3202"
     healthcheck:
-      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:3202/login"]
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3202/login"]
       interval: 5s
       timeout: 5s
       retries: 20
