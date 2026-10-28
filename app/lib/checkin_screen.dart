@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -208,7 +209,10 @@ class _CheckinScreenState extends State<CheckinScreen> {
     });
     try {
       await cam.stopImageStream();
-      final Uint8List photo = await (await cam.takePicture()).readAsBytes();
+      final shot = await cam.takePicture();
+      final Uint8List photo = await shot.readAsBytes();
+      // The camera plugin leaves the JPEG in the cache. Only the server's embedding is kept.
+      await File(shot.path).delete();
 
       setState(() => _status = 'Waiting for a location fix');
       final pos = await _where!;

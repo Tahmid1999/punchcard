@@ -12,7 +12,9 @@ SFACE = 'face_recognition_sface_2021dec.onnx'
 # YuNet confidence below this is not counted as a face at all.
 MIN_SCORE = 0.9
 # Phone photos are 3000+ px wide. YuNet does not need that, and it is slow.
-MAX_SIDE = 1280
+# It also scores a selfie lower when the face is very large: a front-camera
+# shot at 1280 px scored 0.89-0.90 (under MIN_SCORE) and 0.94 at 640 px.
+MAX_SIDE = 640
 
 
 class NotAnImage(ValueError):
