@@ -77,16 +77,22 @@ class _CheckinScreenState extends State<CheckinScreen> {
   }
 
   Future<void> _start() async {
+    // Android shows one permission dialog at a time and quietly denies a second
+    // request made while the first is up, so location is asked for before the camera.
+    final String? noLocation;
+    try {
+      noLocation = await _locationAllowed();
+    } catch (e) {
+      return _fail('Location: $e');
+    }
+    if (noLocation != null) return _fail(noLocation);
+
     // The fix takes longest, so it runs while the face check happens.
     final where = _locate();
     _where = where;
     unawaited(where.then((p) => mounted ? setState(() => _fix = p) : null, onError: (_) {}));
 
     try {
-      final ch = await _api.challenge(widget.pairing.deviceId);
-      _challenge = ch;
-      _live = Liveness(ch.action);
-
       final cameras = await availableCameras();
       final front = cameras.firstWhere((c) => c.lensDirection == CameraLensDirection.front);
       final cam = CameraController(
@@ -98,6 +104,11 @@ class _CheckinScreenState extends State<CheckinScreen> {
       await cam.initialize();
       if (!mounted) return cam.dispose();
       _cam = cam;
+
+      // Fetched after the camera prompt, so time spent on it does not eat the challenge's 60 seconds.
+      final ch = await _api.challenge(widget.pairing.deviceId);
+      _challenge = ch;
+      _live = Liveness(ch.action);
       await cam.startImageStream(_onFrame);
       setState(() => _stage = _Stage.liveness);
     } on ApiException catch (e) {
@@ -107,19 +118,32 @@ class _CheckinScreenState extends State<CheckinScreen> {
             : e.message,
       );
     } on CameraException catch (e) {
-      _fail('Camera: ${e.description ?? e.code}');
+      _fail(switch (e.code) {
+        'CameraAccessDenied' => 'Camera permission is needed to check in.',
+        'CameraAccessDeniedWithoutPrompt' =>
+          'Camera is blocked for this app. Allow it in Settings > Apps > punchcard.',
+        _ => 'Camera: ${e.description ?? e.code}',
+      });
     } catch (e) {
       _fail('Could not reach ${widget.pairing.api.host}: $e');
     }
   }
 
-  Future<Position> _locate() async {
-    if (!await Geolocator.isLocationServiceEnabled()) throw 'Location is turned off';
+  // Null when location can be read, otherwise what to tell the employee.
+  Future<String?> _locationAllowed() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      return 'Location is turned off. Turn it on and try again.';
+    }
     var perm = await Geolocator.checkPermission();
     if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
-    if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
-      throw 'Location permission is needed to check in';
+    if (perm == LocationPermission.deniedForever) {
+      return 'Location is blocked for this app. Allow it in Settings > Apps > punchcard.';
     }
+    if (perm == LocationPermission.denied) return 'Location permission is needed to check in.';
+    return null;
+  }
+
+  Future<Position> _locate() {
     return Geolocator.getCurrentPosition(
       locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.best,
