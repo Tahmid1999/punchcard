@@ -2,8 +2,6 @@
 
 Office attendance from the employee's own Android phone. A check-in carries three proofs: the phone's location, a signature from a key that only unlocks after a fingerprint, and a photo of the face. The server judges all three, and a rejected check-in is saved with its reason just like an accepted one.
 
-![a check-in on the phone: blink, fingerprint, accepted](docs/demo.gif)
-
 I built this to have one project that goes from a phone's secure hardware to a database row and an admin screen, with each part written by me: the API, the face service, the admin panel and the Android app.
 
 NestJS, Prisma, PostgreSQL, Python with OpenCV, Next.js with Ant Design, Flutter with a small Kotlin channel, Docker Compose.
@@ -78,10 +76,10 @@ The row keeps each check's result, the distance, the face score and the reason, 
 - A good printed photo held up to the camera may pass the face match. Real anti-spoofing is out of scope.
 - GPS can be faked. The app sends Android's mock-location flag and the server rejects it, but a rooted phone can hide that flag.
 - No Key Attestation, so the server trusts the app's word that the key is in secure hardware.
+- Pairing is meant to happen at the office, in front of the admin: the QR lives 10 minutes on the admin's screen. Nothing enforces that. An admin who sends a photo of the QR to someone at home has paired a phone nobody checked.
 - 0.363 is the threshold OpenCV publishes for SFace, not one I calibrated. My own phone selfies scored 0.67 to 0.70 against my reference photo. I have not tested a different person against it on real photos, so I can't say how close a lookalike gets.
 - Tested on one phone, an OPPO CPH2113 on Android 12. Turn left and turn right depend on which way ML Kit reports the head angle on each front camera, and I have only seen a right turn pass on that one.
 - Indoors a single GPS reading can be off by 100 m. The app keeps the best reading from the face check, but an office radius under about 50 m will still reject people standing inside.
-- The Dockerfiles are checked by the compose job in CI, not on my machine, which can't run Docker.
 
 ## Tests
 
